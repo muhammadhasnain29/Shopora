@@ -1,81 +1,99 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
-const API_URL = "http://localhost:5256/api";
+import CheckoutSteps from "../components/CheckoutSteps";
+import OrderSummaryPanel from "../components/OrderSummaryPanel";
+import { ErrorState, Spinner } from "../components/States";
+import api from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { STORE, formatPrice } from "../config/store";
 
 const PAYMENT_METHODS = [
   {
     value: "Cash on Delivery",
     label: "Cash on Delivery",
-    description: "Pay in cash when your order is delivered.",
+    description: "Pay the rider in cash when your order arrives.",
+    note: "Your order is confirmed now and payment is collected on delivery.",
   },
   {
     value: "Bank Transfer",
     label: "Bank Transfer",
-    description: "Pay now via direct bank transfer.",
+    description: "Record a bank transfer against this order.",
+    note: "Test flow: the order is marked as paid in the Shopora database. No real payment gateway is connected.",
   },
 ];
 
+/** Step 3 of the checkout: choosing how the order will be paid for. */
 function Payment() {
   const { orderId } = useParams();
   const navigate = useNavigate();
 
+  const { userId } = useAuth();
+  const { showToast } = useToast();
+
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [method, setMethod] = useState("Cash on Delivery");
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
-  const [method, setMethod] = useState("Cash on Delivery");
 
   useEffect(() => {
-    const fetchOrder = async () => {
+    let cancelled = false;
+
+    const loadOrder = async () => {
+      setLoading(true);
+      setLoadError("");
+
       try {
-        setLoading(true);
+        const data = await api.getOrder(orderId, userId);
 
-        const response = await fetch(`${API_URL}/orders/${orderId}`);
-
-        if (!response.ok) {
-          throw new Error("Order not found.");
+        if (!cancelled) {
+          setOrder(data);
         }
-
-        const data = await response.json();
-
-        setOrder(data);
       } catch (err) {
-        console.error("Payment order fetch error:", err);
-        setError("Unable to load this order.");
+        if (!cancelled) {
+          setLoadError(
+            err.status === 403
+              ? "This order belongs to a different account."
+              : err.message || "Unable to load this order."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
-    fetchOrder();
-  }, [orderId]);
+    if (userId) {
+      loadOrder();
+    }
 
-  const handleConfirmPayment = async (e) => {
-    e.preventDefault();
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, userId]);
+
+  const handleConfirm = async (event) => {
+    event.preventDefault();
 
     setConfirming(true);
     setError("");
 
     try {
-      const response = await fetch(`${API_URL}/orders/${orderId}/pay`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          paymentMethod: method,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Payment could not be confirmed. Please try again.");
-      }
+      await api.confirmPayment(orderId, userId, method);
 
       navigate(`/order-confirmation/${orderId}`);
     } catch (err) {
       console.error("Confirm payment error:", err);
-      setError(err.message);
+
+      const message =
+        err.message || "Payment could not be confirmed. Please try again.";
+
+      setError(message);
+      showToast(message, "error");
     } finally {
       setConfirming(false);
     }
@@ -83,103 +101,127 @@ function Payment() {
 
   if (loading) {
     return (
-      <section className="products-section">
-        <h1 className="loading">Loading order...</h1>
+      <section className="section">
+        <div className="section-inner page-centered">
+          <Spinner label="Loading your order…" />
+        </div>
       </section>
     );
   }
 
-  if (!order) {
+  if (loadError || !order) {
     return (
-      <section className="products-section">
-        <h1 className="loading">{error || "Order not found."}</h1>
+      <section className="section">
+        <div className="section-inner">
+          <CheckoutSteps current={3} />
+          <ErrorState message={loadError || "Order not found."} />
+
+          <div className="center-row">
+            <Link to="/orders" className="link-arrow">
+              Go to my orders <span aria-hidden="true">→</span>
+            </Link>
+          </div>
+        </div>
       </section>
     );
   }
+
+  const lines = (order.orderItems || []).map((item) => ({
+    key: item.orderItemId,
+    productId: item.productId,
+    name: item.productName,
+    quantity: item.quantity,
+    price: item.price,
+  }));
+
+  const selected = PAYMENT_METHODS.find((option) => option.value === method);
 
   return (
-    <section className="products-section">
-      <div className="section-heading">
-        <p>ORDER {order.orderNumber}</p>
-        <h2>Select Payment Method</h2>
-      </div>
+    <section className="section">
+      <div className="section-inner">
+        <CheckoutSteps current={3} />
 
-      <div className="checkout-layout">
-        <form className="checkout-form" onSubmit={handleConfirmPayment}>
-          <h3 className="checkout-subheading">Payment Method</h3>
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">Step 3 of 4 — order {order.orderNumber}</p>
+            <h2>Payment</h2>
+          </div>
+        </div>
 
-          {PAYMENT_METHODS.map((option) => (
-            <label
-              key={option.value}
-              className={
-                "payment-option" +
-                (method === option.value ? " payment-option-active" : "")
-              }
-            >
-              <input
-                type="radio"
-                name="paymentMethod"
-                value={option.value}
-                checked={method === option.value}
-                onChange={(e) => setMethod(e.target.value)}
-              />
+        <div className="checkout-layout">
+          <form className="panel" onSubmit={handleConfirm}>
+            <h3 className="panel-title">Choose a payment method</h3>
 
-              <div>
-                <strong>{option.label}</strong>
-                <p style={{ margin: "4px 0 0", color: "#666", fontSize: "14px" }}>
-                  {option.description}
-                </p>
-              </div>
-            </label>
-          ))}
+            {PAYMENT_METHODS.map((option) => (
+              <label
+                key={option.value}
+                className={`payment-option${
+                  method === option.value ? " payment-option-active" : ""
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="paymentMethod"
+                  value={option.value}
+                  checked={method === option.value}
+                  onChange={(event) => setMethod(event.target.value)}
+                />
 
-          {error && (
-            <p style={{ color: "red", marginTop: "15px" }}>{error}</p>
-          )}
+                <div>
+                  <strong>{option.label}</strong>
+                  <p className="muted">{option.description}</p>
+                </div>
+              </label>
+            ))}
 
-          <button
-            type="submit"
-            disabled={confirming}
-            style={{ width: "100%", marginTop: "20px" }}
-          >
-            {confirming
-              ? "Processing..."
-              : method === "Cash on Delivery"
-              ? "Confirm Order"
-              : "Pay Now"}
-          </button>
-        </form>
+            <div className="notice">
+              <p>
+                <strong>Payment method selected:</strong> {method}
+              </p>
 
-        <div className="checkout-summary">
-          <h3 className="checkout-subheading">Order Summary</h3>
-
-          {order.orderItems.map((item) => (
-            <div className="summary-line" key={item.orderItemId}>
-              <span>
-                {item.productName} <small>x{item.quantity}</small>
-              </span>
-              <span>${(item.price * item.quantity).toFixed(2)}</span>
+              <p className="muted">{selected?.note}</p>
             </div>
-          ))}
 
-          <hr />
+            <p className="fine-print">
+              Nothing has been paid yet. Confirming below records your choice
+              against the order in the Shopora database.
+            </p>
 
-          <div className="summary-line">
-            <span>Subtotal</span>
-            <span>${order.subtotal.toFixed(2)}</span>
-          </div>
+            {error && <p className="form-error">{error}</p>}
 
-          <div className="summary-line">
-            <span>Delivery Charges</span>
-            <span>${order.deliveryCharge.toFixed(2)}</span>
-          </div>
+            <button
+              type="submit"
+              className="btn btn-primary btn-block btn-lg"
+              disabled={confirming}
+            >
+              {confirming
+                ? "Confirming…"
+                : method === "Cash on Delivery"
+                ? "Confirm Order"
+                : "Record Payment & Confirm"}
+            </button>
 
-          <hr />
+            <div className="center-row">
+              <Link to="/cart" className="link-arrow">
+                <span aria-hidden="true">←</span> Back to cart
+              </Link>
+            </div>
+          </form>
 
-          <div className="summary-line summary-total">
-            <span>Grand Total</span>
-            <span>${order.grandTotal.toFixed(2)}</span>
-          </div>
+          <OrderSummaryPanel
+            lines={lines}
+            subtotal={order.subtotal}
+            shipping={order.deliveryCharge}
+            total={order.grandTotal}
+            orderDate={order.createdAt}
+            footer={
+              <p className="fine-print">
+                Sold by {STORE.soldBy}. Shipping fee{" "}
+                {formatPrice(order.deliveryCharge)} is already included in the
+                total above.
+              </p>
+            }
+          />
         </div>
       </div>
     </section>

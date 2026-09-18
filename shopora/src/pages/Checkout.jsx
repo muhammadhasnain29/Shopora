@@ -1,298 +1,272 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
-const API_URL = "http://localhost:5256/api";
-const DELIVERY_CHARGE = 5.0;
+import CheckoutSteps from "../components/CheckoutSteps";
+import OrderSummaryPanel from "../components/OrderSummaryPanel";
+import { ErrorState, StateMessage, Spinner } from "../components/States";
+import api from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
+import { useToast } from "../context/ToastContext";
+import { STORE, formatPrice, getDeliveryWindow } from "../config/store";
 
-function Checkout({ refreshCartCount }) {
+/**
+ * Step 2 of the checkout: where the order is going. The billing details
+ * collected here are what the API stores on the order's BillingDetail record.
+ */
+function Checkout() {
   const navigate = useNavigate();
 
-  const loggedInUser = JSON.parse(
-    localStorage.getItem("shoporaUser") || "null"
-  );
+  const { user, userId } = useAuth();
+  const { items, subtotal, cartId, loading, error, refresh } = useCart();
+  const { showToast } = useToast();
 
-  const [cart, setCart] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [placing, setPlacing] = useState(false);
-  const [error, setError] = useState("");
-
-  const [fullName, setFullName] = useState(loggedInUser?.name || "");
-  const [email, setEmail] = useState(loggedInUser?.email || "");
-  const [phone, setPhone] = useState(loggedInUser?.phone || "");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
   const [postalCode, setPostalCode] = useState("");
 
+  const [placing, setPlacing] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  // Prefill from the signed in account once it is known.
   useEffect(() => {
-    if (!loggedInUser) {
-      navigate("/login", { state: { from: "/checkout" } });
-      return;
-    }
+    setFullName((current) => current || user?.name || "");
+    setEmail((current) => current || user?.email || "");
+    setPhone((current) => current || user?.phone || "");
+  }, [user]);
 
-    const fetchCart = async () => {
-      try {
-        setLoading(true);
+  const deliveryWindow = getDeliveryWindow();
+  const total = subtotal + STORE.deliveryCharge;
 
-        const response = await fetch(
-          `${API_URL}/cart/${loggedInUser.cartId}`
-        );
-
-        if (!response.ok) {
-          throw new Error("Failed to load cart");
-        }
-
-        const data = await response.json();
-
-        setCart(data);
-      } catch (err) {
-        console.error("Checkout cart error:", err);
-        setError("Unable to load your cart. Please try again.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCart();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  if (!loggedInUser) {
-    return null;
-  }
-
-  if (loading) {
-    return (
-      <section className="products-section">
-        <h1 className="loading">Loading checkout...</h1>
-      </section>
-    );
-  }
-
-  if (!cart || cart.cartItems.length === 0) {
-    return (
-      <section className="products-section">
-        <div className="section-heading">
-          <p>CHECKOUT</p>
-          <h2>Your cart is empty</h2>
-        </div>
-
-        <div style={{ textAlign: "center" }}>
-          <button onClick={() => navigate("/products")}>
-            Continue Shopping
-          </button>
-        </div>
-      </section>
-    );
-  }
-
-  const subtotal = cart.cartItems.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
-
-  const grandTotal = subtotal + DELIVERY_CHARGE;
-
-  const handlePlaceOrder = async (e) => {
-    e.preventDefault();
+  const handlePlaceOrder = async (event) => {
+    event.preventDefault();
 
     setPlacing(true);
-    setError("");
+    setFormError("");
 
     try {
-      const response = await fetch(`${API_URL}/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userId: loggedInUser.userId,
-          cartId: loggedInUser.cartId,
-          fullName,
-          email,
-          phone,
-          address,
-          city,
-          postalCode,
-        }),
+      const created = await api.createOrder({
+        userId,
+        cartId,
+        fullName,
+        email,
+        phone,
+        address,
+        city,
+        postalCode,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Order creation failed:", errorText);
-        throw new Error("Failed to place order. Please try again.");
-      }
+      // The API empties the cart as part of creating the order.
+      await refresh();
 
-      const data = await response.json();
-
-      if (refreshCartCount) {
-        await refreshCartCount();
-      }
-
-      navigate(`/payment/${data.orderId}`);
+      navigate(`/payment/${created.orderId}`);
     } catch (err) {
       console.error("Place order error:", err);
-      setError(err.message);
+
+      const message = err.message || "Failed to place order. Please try again.";
+
+      setFormError(message);
+      showToast(message, "error");
     } finally {
       setPlacing(false);
     }
   };
 
+  if (loading) {
+    return (
+      <section className="section">
+        <div className="section-inner page-centered">
+          <Spinner label="Loading checkout…" />
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="section">
+        <div className="section-inner">
+          <CheckoutSteps current={2} />
+          <ErrorState message={error} onRetry={refresh} />
+        </div>
+      </section>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <section className="section">
+        <div className="section-inner">
+          <CheckoutSteps current={2} />
+
+          <StateMessage
+            icon="🛒"
+            title="Your cart is empty."
+            description="Add something to your cart before checking out."
+            actionLabel="Browse Products"
+            actionTo="/products"
+          />
+        </div>
+      </section>
+    );
+  }
+
+  const lines = items.map((item) => ({
+    key: item.cartItemId,
+    productId: item.productId,
+    name: item.productName,
+    quantity: item.quantity,
+    price: item.price,
+  }));
+
   return (
-    <section className="products-section">
-      <div className="section-heading">
-        <p>SECURE CHECKOUT</p>
-        <h2>Checkout</h2>
-      </div>
+    <section className="section">
+      <div className="section-inner">
+        <CheckoutSteps current={2} />
 
-      <div className="checkout-layout">
-        <form className="checkout-form" onSubmit={handlePlaceOrder}>
-          <h3 className="checkout-subheading">Billing Information</h3>
-
-          <div style={{ marginBottom: "16px" }}>
-            <label>Full Name</label>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Enter your full name"
-              required
-              style={{
-                width: "100%",
-                padding: "12px",
-                marginTop: "8px",
-                boxSizing: "border-box",
-              }}
-            />
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">Step 2 of 4</p>
+            <h2>Shipping Details</h2>
           </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label>Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Enter your email"
-              required
-              style={{
-                width: "100%",
-                padding: "12px",
-                marginTop: "8px",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
+          <Link to="/cart" className="link-arrow">
+            <span aria-hidden="true">←</span> Back to cart
+          </Link>
+        </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label>Phone</label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="03XXXXXXXXX"
-              required
-              style={{
-                width: "100%",
-                padding: "12px",
-                marginTop: "8px",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
+        <div className="checkout-layout">
+          <form className="panel form" onSubmit={handlePlaceOrder}>
+            <h3 className="panel-title">Contact</h3>
 
-          <h3 className="checkout-subheading">Billing Address</h3>
-
-          <div style={{ marginBottom: "16px" }}>
-            <label>Address</label>
-            <input
-              type="text"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="House / Street / Area"
-              required
-              style={{
-                width: "100%",
-                padding: "12px",
-                marginTop: "8px",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          <div className="checkout-row">
-            <div style={{ marginBottom: "16px", flex: 1 }}>
-              <label>City</label>
+            <div className="field">
+              <label htmlFor="checkout-name">Full name</label>
               <input
+                id="checkout-name"
                 type="text"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="City"
+                value={fullName}
+                onChange={(event) => setFullName(event.target.value)}
+                placeholder="Your full name"
                 required
-                style={{
-                  width: "100%",
-                  padding: "12px",
-                  marginTop: "8px",
-                  boxSizing: "border-box",
-                }}
+                autoComplete="name"
               />
             </div>
 
-            <div style={{ marginBottom: "16px", flex: 1 }}>
-              <label>Postal Code</label>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="checkout-email">Email</label>
+                <input
+                  id="checkout-email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  autoComplete="email"
+                />
+              </div>
+
+              <div className="field">
+                <label htmlFor="checkout-phone">Phone</label>
+                <input
+                  id="checkout-phone"
+                  type="tel"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder="03XXXXXXXXX"
+                  required
+                  autoComplete="tel"
+                />
+              </div>
+            </div>
+
+            <h3 className="panel-title panel-title-spaced">Shipping address</h3>
+
+            <div className="field">
+              <label htmlFor="checkout-address">Address</label>
               <input
+                id="checkout-address"
                 type="text"
-                value={postalCode}
-                onChange={(e) => setPostalCode(e.target.value)}
-                placeholder="Postal Code"
+                value={address}
+                onChange={(event) => setAddress(event.target.value)}
+                placeholder="House / street / area"
                 required
-                style={{
-                  width: "100%",
-                  padding: "12px",
-                  marginTop: "8px",
-                  boxSizing: "border-box",
-                }}
+                autoComplete="street-address"
               />
             </div>
-          </div>
 
-          {error && (
-            <p style={{ color: "red", marginBottom: "15px" }}>{error}</p>
-          )}
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="checkout-city">City</label>
+                <input
+                  id="checkout-city"
+                  type="text"
+                  value={city}
+                  onChange={(event) => setCity(event.target.value)}
+                  placeholder="City"
+                  required
+                  autoComplete="address-level2"
+                />
+              </div>
 
-          <button type="submit" disabled={placing} style={{ width: "100%" }}>
-            {placing ? "Placing Order..." : "Place Order"}
-          </button>
-        </form>
+              <div className="field">
+                <label htmlFor="checkout-postal">Postal code</label>
+                <input
+                  id="checkout-postal"
+                  type="text"
+                  value={postalCode}
+                  onChange={(event) => setPostalCode(event.target.value)}
+                  placeholder="Postal code"
+                  required
+                  autoComplete="postal-code"
+                />
+              </div>
+            </div>
 
-        <div className="checkout-summary">
-          <h3 className="checkout-subheading">Order Summary</h3>
+            <h3 className="panel-title panel-title-spaced">Delivery method</h3>
 
-          {cart.cartItems.map((item) => (
-            <div className="summary-line" key={item.cartItemId}>
-              <span>
-                {item.productName} <small>x{item.quantity}</small>
+            <div className="delivery-option">
+              <span className="delivery-radio" aria-hidden="true" />
+
+              <div>
+                <strong>{STORE.shippingMethod}</strong>
+
+                <p className="muted">
+                  Shipped by {STORE.shippedBy}
+                  {deliveryWindow ? ` — estimated ${deliveryWindow.label}` : ""}
+                </p>
+              </div>
+
+              <span className="delivery-price">
+                {formatPrice(STORE.deliveryCharge)}
               </span>
-              <span>${(item.price * item.quantity).toFixed(2)}</span>
             </div>
-          ))}
 
-          <hr />
+            <p className="fine-print">
+              Standard delivery is the only method Shopora offers today. Extra
+              carriers can be added here once the API supports them.
+            </p>
 
-          <div className="summary-line">
-            <span>Subtotal</span>
-            <span>${subtotal.toFixed(2)}</span>
-          </div>
+            {formError && <p className="form-error">{formError}</p>}
 
-          <div className="summary-line">
-            <span>Delivery Charges</span>
-            <span>${DELIVERY_CHARGE.toFixed(2)}</span>
-          </div>
+            <button
+              type="submit"
+              className="btn btn-primary btn-block btn-lg"
+              disabled={placing}
+            >
+              {placing ? "Placing order…" : "Continue to Payment"}
+            </button>
+          </form>
 
-          <hr />
-
-          <div className="summary-line summary-total">
-            <span>Grand Total</span>
-            <span>${grandTotal.toFixed(2)}</span>
-          </div>
+          <OrderSummaryPanel
+            lines={lines}
+            subtotal={subtotal}
+            shipping={STORE.deliveryCharge}
+            total={total}
+          />
         </div>
       </div>
     </section>

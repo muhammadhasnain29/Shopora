@@ -1,170 +1,136 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-const API_URL = "http://localhost:5256/api";
+import CheckoutSteps from "../components/CheckoutSteps";
+import OrderDetailView from "../components/OrderDetailView";
+import { ErrorState, Spinner } from "../components/States";
+import api from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { STORE, formatPrice, getDeliveryWindow } from "../config/store";
 
+/** Step 4: the success screen shown right after an order is placed. */
 function OrderConfirmation() {
   const { orderId } = useParams();
+  const { userId } = useAuth();
 
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const fetchOrder = async () => {
+    let cancelled = false;
+
+    const loadOrder = async () => {
+      setLoading(true);
+      setError("");
+
       try {
-        setLoading(true);
+        const data = await api.getOrder(orderId, userId);
 
-        const response = await fetch(`${API_URL}/orders/${orderId}`);
-
-        if (!response.ok) {
-          throw new Error("Order not found.");
+        if (!cancelled) {
+          setOrder(data);
         }
-
-        const data = await response.json();
-
-        setOrder(data);
       } catch (err) {
-        console.error("Order confirmation fetch error:", err);
-        setError("Unable to load this order.");
+        if (!cancelled) {
+          setError(
+            err.status === 403
+              ? "This order belongs to a different account."
+              : err.message || "Unable to load this order."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
-    fetchOrder();
-  }, [orderId]);
+    if (userId) {
+      loadOrder();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, userId]);
 
   if (loading) {
     return (
-      <section className="products-section">
-        <h1 className="loading">Loading order...</h1>
+      <section className="section">
+        <div className="section-inner page-centered">
+          <Spinner label="Loading your order…" />
+        </div>
       </section>
     );
   }
 
-  if (!order) {
+  if (error || !order) {
     return (
-      <section className="products-section">
-        <h1 className="loading">{error || "Order not found."}</h1>
+      <section className="section">
+        <div className="section-inner">
+          <ErrorState message={error || "Order not found."} />
+        </div>
       </section>
     );
   }
 
-  const billing = order.billingDetail;
-  const payment = order.payment;
-
-  const isPaid = payment?.status === "Paid";
+  const deliveryWindow = getDeliveryWindow(order.createdAt);
 
   return (
-    <section className="products-section">
-      <div className="section-heading no-print">
-        <p>THANK YOU</p>
-        <h2>Order Confirmed</h2>
-      </div>
+    <section className="section">
+      <div className="section-inner">
+        <CheckoutSteps current={4} />
 
-      <div className="invoice">
-        <div className="invoice-header">
-          <div>
-            <h2 style={{ marginBottom: "6px" }}>SHOPORA</h2>
-            <p style={{ color: "#666" }}>Order Invoice / Challan</p>
+        <div className="confirmation-hero">
+          <span className="confirmation-check" aria-hidden="true">
+            ✓
+          </span>
+
+          <h2>Order placed successfully!</h2>
+
+          <p className="muted">
+            Thank you for shopping with {STORE.name}.
+          </p>
+
+          <div className="confirmation-facts">
+            <div>
+              <span className="meta-label">Order number</span>
+              <span className="meta-value">{order.orderNumber}</span>
+            </div>
+
+            {deliveryWindow && (
+              <div>
+                <span className="meta-label">Estimated delivery</span>
+                <span className="meta-value">{deliveryWindow.label}</span>
+              </div>
+            )}
+
+            <div>
+              <span className="meta-label">Total paid / due</span>
+              <span className="meta-value">{formatPrice(order.grandTotal)}</span>
+            </div>
           </div>
 
-          <div style={{ textAlign: "right" }}>
-            <p>
-              <strong>Order #:</strong> {order.orderNumber}
-            </p>
-            <p>
-              <strong>Date:</strong>{" "}
-              {new Date(order.createdAt).toLocaleDateString()}
-            </p>
-            <p>
-              <strong>Status:</strong>{" "}
-              <span
-                className={
-                  "status-badge " + (isPaid ? "status-paid" : "status-pending")
-                }
-              >
-                {isPaid ? "PAID" : payment?.status?.toUpperCase()}
-              </span>
-            </p>
-          </div>
-        </div>
+          <div className="confirmation-actions no-print">
+            <Link to={`/orders/${order.orderId}`} className="btn btn-primary btn-lg">
+              View Order
+            </Link>
 
-        <hr />
+            <Link to="/products" className="btn btn-outline btn-lg">
+              Continue Shopping
+            </Link>
 
-        <div className="invoice-columns">
-          <div>
-            <h3 className="checkout-subheading">Billing Details</h3>
-            <p>{billing?.fullName}</p>
-            <p>{billing?.email}</p>
-            <p>{billing?.phone}</p>
-            <p>
-              {billing?.address}, {billing?.city} {billing?.postalCode}
-            </p>
-          </div>
-
-          <div>
-            <h3 className="checkout-subheading">Payment</h3>
-            <p>
-              <strong>Method:</strong> {payment?.method || "N/A"}
-            </p>
-            <p>
-              <strong>Payment Status:</strong> {payment?.status}
-            </p>
-            <p>
-              <strong>Order Status:</strong> {order.status}
-            </p>
+            <button
+              type="button"
+              className="btn btn-ghost btn-lg"
+              onClick={() => window.print()}
+            >
+              Print Receipt
+            </button>
           </div>
         </div>
 
-        <h3 className="checkout-subheading">Items</h3>
-
-        <table className="invoice-table">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>Qty</th>
-              <th>Price</th>
-              <th>Subtotal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {order.orderItems.map((item) => (
-              <tr key={item.orderItemId}>
-                <td>{item.productName}</td>
-                <td>{item.quantity}</td>
-                <td>${item.price.toFixed(2)}</td>
-                <td>${(item.price * item.quantity).toFixed(2)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="invoice-totals">
-          <div className="summary-line">
-            <span>Subtotal</span>
-            <span>${order.subtotal.toFixed(2)}</span>
-          </div>
-          <div className="summary-line">
-            <span>Delivery Charges</span>
-            <span>${order.deliveryCharge.toFixed(2)}</span>
-          </div>
-          <div className="summary-line summary-total">
-            <span>Grand Total</span>
-            <span>${order.grandTotal.toFixed(2)}</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="invoice-actions no-print">
-        <button onClick={() => window.print()}>
-          Download / Print Challan
-        </button>
-
-        <Link to="/products">
-          <button className="secondary-btn">Continue Shopping</button>
-        </Link>
+        <OrderDetailView order={order} />
       </div>
     </section>
   );

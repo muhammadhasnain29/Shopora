@@ -104,6 +104,10 @@ namespace Shopora.API.Controllers
                 return Unauthorized("Invalid email or password.");
             }
 
+            // Accounts created before carts were introduced (or where cart
+            // creation failed) would otherwise log in with no cartId at all.
+            var cart = await EnsureCartAsync(user);
+
             return Ok(new
             {
                 message = "Login successful.",
@@ -111,8 +115,65 @@ namespace Shopora.API.Controllers
                 email = user.Email,
                 name = user.UserProfile?.Name,
                 phone = user.UserProfile?.Phone,
-                cartId = user.Cart?.CartId
+                cartId = cart.CartId
             });
+        }
+
+        // GET: api/auth/me/5
+        // Re-validates a remembered session against the database and returns the
+        // authoritative account details, including the cart that really belongs
+        // to this user. The frontend calls this on startup so a stale value left
+        // in localStorage can never keep a deleted or wrong user "logged in".
+        [HttpGet("me/{userId}")]
+        public async Task<IActionResult> GetCurrentUser(int userId)
+        {
+            var user = await _context.Users
+                .Include(u => u.UserProfile)
+                .Include(u => u.Cart)
+                .FirstOrDefaultAsync(u => u.UserId == userId);
+
+            if (user == null)
+            {
+                return NotFound("Session is no longer valid.");
+            }
+
+            var cart = await EnsureCartAsync(user);
+
+            return Ok(new
+            {
+                userId = user.UserId,
+                email = user.Email,
+                name = user.UserProfile?.Name,
+                phone = user.UserProfile?.Phone,
+                createdAt = user.CreatedAt,
+                cartId = cart.CartId
+            });
+        }
+
+        // Returns the user's cart, creating it if the account does not have one.
+        private async Task<Cart> EnsureCartAsync(User user)
+        {
+            var cart = user.Cart
+                ?? await _context.Carts
+                    .FirstOrDefaultAsync(c => c.UserId == user.UserId);
+
+            if (cart != null)
+            {
+                return cart;
+            }
+
+            cart = new Cart
+            {
+                UserId = user.UserId,
+                UserName = user.UserProfile?.Name ?? string.Empty,
+                UserNumber = user.UserProfile?.Phone ?? string.Empty,
+                CreatedAt = DateTime.Now
+            };
+
+            _context.Carts.Add(cart);
+            await _context.SaveChangesAsync();
+
+            return cart;
         }
 
         // Password hashing

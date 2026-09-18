@@ -31,9 +31,12 @@ namespace Shopora.API.Controllers
                 return NotFound("User not found.");
             }
 
+            // Resolve the cart from the user rather than trusting whatever CartId
+            // the browser sent. A stale CartId left over from a previous session
+            // could otherwise turn someone else's cart into this user's order.
             var cart = await _context.Carts
                 .Include(c => c.CartItems)
-                .FirstOrDefaultAsync(c => c.CartId == request.CartId);
+                .FirstOrDefaultAsync(c => c.UserId == user.UserId);
 
             if (cart == null)
             {
@@ -108,8 +111,12 @@ namespace Shopora.API.Controllers
         }
 
         // GET: api/orders/5
+        // GET: api/orders/5?userId=3
+        // When userId is supplied the order is only returned if it belongs to
+        // that user, so one customer can never open another customer's order by
+        // guessing an id in the URL.
         [HttpGet("{id}")]
-        public async Task<ActionResult<Order>> GetOrder(int id)
+        public async Task<ActionResult<Order>> GetOrder(int id, [FromQuery] int? userId)
         {
             var order = await _context.Orders
                 .Include(o => o.OrderItems)
@@ -120,6 +127,11 @@ namespace Shopora.API.Controllers
             if (order == null)
             {
                 return NotFound("Order not found.");
+            }
+
+            if (userId.HasValue && order.UserId != userId.Value)
+            {
+                return StatusCode(403, "This order does not belong to the current user.");
             }
 
             return Ok(order);
@@ -145,7 +157,10 @@ namespace Shopora.API.Controllers
         // Confirms the selected payment method. Bank Transfer is treated as paid
         // immediately (simulated gateway); Cash on Delivery stays pending until delivery.
         [HttpPut("{id}/pay")]
-        public async Task<ActionResult<Order>> ConfirmPayment(int id, ConfirmPaymentRequest request)
+        public async Task<ActionResult<Order>> ConfirmPayment(
+            int id,
+            ConfirmPaymentRequest request,
+            [FromQuery] int? userId)
         {
             var order = await _context.Orders
                 .Include(o => o.OrderItems)
@@ -156,6 +171,11 @@ namespace Shopora.API.Controllers
             if (order == null)
             {
                 return NotFound("Order not found.");
+            }
+
+            if (userId.HasValue && order.UserId != userId.Value)
+            {
+                return StatusCode(403, "This order does not belong to the current user.");
             }
 
             if (order.Payment == null)

@@ -5,20 +5,22 @@ import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { STORE } from "../config/store";
 
-/** Standalone login page, used for direct visits and protected-route redirects. */
-function Login() {
+/** Standalone create-account page. */
+function Register() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const { login } = useAuth();
+  const { register } = useAuth();
   const { showToast } = useToast();
 
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  // Where the visitor was heading before being asked to sign in.
   const redirectTo = location.state?.from || "/";
 
   const handleSubmit = async (event) => {
@@ -28,14 +30,14 @@ function Login() {
     setError("");
 
     try {
-      const user = await login(email, password);
+      const user = await register({ name, phone, email, password });
 
-      showToast(`Welcome back, ${user.name || user.email}.`);
+      showToast(`Welcome to ${STORE.name}, ${user.name || user.email}.`);
 
       navigate(redirectTo, { replace: true });
     } catch (err) {
-      console.error("Login error:", err);
-      setError(err.message || "Invalid email or password.");
+      console.error("Registration error:", err);
+      setError(err.message || "Registration failed. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -50,16 +52,44 @@ function Login() {
               S
             </span>
 
-            <h2>Welcome back</h2>
+            <h2>Create your account</h2>
 
-            <p className="muted">Sign in to your {STORE.name} account.</p>
+            <p className="muted">
+              Join {STORE.name} to save your cart and track your orders.
+            </p>
           </div>
 
           <form className="form" onSubmit={handleSubmit}>
             <div className="field">
-              <label htmlFor="login-email">Email</label>
+              <label htmlFor="register-name">Full name</label>
               <input
-                id="login-email"
+                id="register-name"
+                type="text"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Your full name"
+                required
+                autoComplete="name"
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="register-phone">Phone number</label>
+              <input
+                id="register-phone"
+                type="tel"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+                placeholder="03XXXXXXXXX"
+                required
+                autoComplete="tel"
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="register-email">Email</label>
+              <input
+                id="register-email"
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -70,15 +100,16 @@ function Login() {
             </div>
 
             <div className="field">
-              <label htmlFor="login-password">Password</label>
+              <label htmlFor="register-password">Password</label>
               <input
-                id="login-password"
+                id="register-password"
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Your password"
+                placeholder="At least 6 characters"
                 required
-                autoComplete="current-password"
+                minLength={6}
+                autoComplete="new-password"
               />
             </div>
 
@@ -89,20 +120,14 @@ function Login() {
               className="btn btn-primary btn-block btn-lg"
               disabled={submitting}
             >
-              {submitting ? "Signing in…" : "Login"}
+              {submitting ? "Creating account…" : "Create Account"}
             </button>
           </form>
 
           <p className="auth-switch">
-            Don&rsquo;t have an account?{" "}
-            <Link to="/register" state={location.state}>
-              Create one
-            </Link>
-          </p>
-
-          <p className="auth-switch">
-            <Link to="/products" className="link-arrow">
-              Continue browsing as a guest <span aria-hidden="true">→</span>
+            Already have an account?{" "}
+            <Link to="/login" state={location.state}>
+              Login
             </Link>
           </p>
         </div>
@@ -111,4 +136,4 @@ function Login() {
   );
 }
 
-export default Login;
+export default Register;

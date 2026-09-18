@@ -1,32 +1,64 @@
 import { Link } from "react-router-dom";
 
+import Rating from "./Rating";
+import useAddToCart from "../hooks/useAddToCart";
+import { formatCategory, formatPrice } from "../config/store";
+
+/**
+ * A single product tile. Every card is the same height regardless of how long
+ * the title is, and the image is contained rather than stretched.
+ */
 function ProductCard({ product }) {
+  const { addToCart, pendingProductId } = useAddToCart();
+
+  if (!product) {
+    return null;
+  }
+
+  const isAdding = pendingProductId === product.id;
+
   return (
-    <div className="product-card">
-      <Link to={`/products/${product.id}`} className="product-image">
-        <img src={product.image} alt={product.title} />
+    <article className="product-card">
+      <Link
+        to={`/products/${product.id}`}
+        className="product-card-media"
+        aria-label={product.title}
+      >
+        <img src={product.image} alt={product.title} loading="lazy" />
+
+        <span className="product-card-badge">
+          {formatCategory(product.category)}
+        </span>
       </Link>
 
-      <div className="product-info">
-        <p className="product-category">{product.category}</p>
+      <div className="product-card-body">
+        <h3 className="product-card-title" title={product.title}>
+          <Link to={`/products/${product.id}`}>{product.title}</Link>
+        </h3>
 
-        <h3>{product.title}</h3>
+        <Rating rate={product.rating.rate} count={product.rating.count} />
 
-        <div className="product-rating">
-          ⭐ {product.rating.rate}
-          <span> ({product.rating.count})</span>
+        <p className="product-card-price">{formatPrice(product.price)}</p>
+
+        <div className="product-card-actions">
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={() => addToCart(product, 1)}
+            disabled={isAdding}
+          >
+            {isAdding ? "Adding…" : "Add to Cart"}
+          </button>
+
+          <Link
+            to={`/products/${product.id}`}
+            className="btn btn-ghost btn-block"
+          >
+            View Details
+          </Link>
         </div>
-
-        <p className="product-price">${product.price}</p>
-
-        <Link
-          to={`/products/${product.id}`}
-          className="view-product"
-        >
-          View Product
-        </Link>
       </div>
-    </div>
+    </article>
   );
 }
 
